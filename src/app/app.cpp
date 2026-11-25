@@ -47,7 +47,7 @@
 #endif
 
 #ifndef APP_CONFIG_FILE
-#define APP_CONFIG_FILE "template-app.conf"
+#define APP_CONFIG_FILE "metronome.conf"
 #endif
 
 namespace app {
@@ -60,9 +60,9 @@ void quit_requested_observer(lv_observer_t* observer, lv_subject_t* subject) {
     }
 }
 
-struct DarkModePersistence {
+struct ConfigPersistence {
     std::string config_path;
-    bool last_dark_mode;
+    viewmodel::BaseViewModel* view_model{nullptr};
 };
 
 std::string writable_config_path() {
@@ -72,37 +72,39 @@ std::string writable_config_path() {
     if (const char* xdg_config_home = std::getenv("XDG_CONFIG_HOME")) {
         const std::filesystem::path root(xdg_config_home);
         if (!root.empty() && root.is_absolute()) {
-            return (root / "template-app" / "template-app.conf").string();
+            return (root / "metronome" / "metronome.conf").string();
         }
     }
     if (const char* home = std::getenv("HOME")) {
         const std::filesystem::path root(home);
         if (!root.empty() && root.is_absolute()) {
-            return (root / ".config" / "template-app" / "template-app.conf").string();
+            return (root / ".config" / "metronome" / "metronome.conf").string();
         }
     }
     return APP_CONFIG_FILE;
 #endif
 }
 
-void persist_dark_mode_observer(lv_observer_t* observer, lv_subject_t* subject) {
-    auto* persistence = static_cast<DarkModePersistence*>(lv_observer_get_user_data(observer));
-    if (!persistence) {
+void persist_config_observer(lv_observer_t* observer, lv_subject_t*) {
+    auto* persistence = static_cast<ConfigPersistence*>(lv_observer_get_user_data(observer));
+    if (!persistence || !persistence->view_model) {
         return;
     }
-    const bool dark_mode = lv_subject_get_int(subject) != 0;
-    if (dark_mode == persistence->last_dark_mode) {
-        return;
-    }
-    persistence->last_dark_mode = dark_mode;
 
+    auto* view_model = persistence->view_model;
     ApplicationConfig config;
-    config.dark_mode = dark_mode;
+    config.dark_mode = view_model->is_dark_mode();
+    config.bpm = view_model->bpm();
+    config.beats_per_measure = view_model->beats_per_measure();
+    config.beat_unit = view_model->beat_unit();
+    config.subdivision = view_model->subdivision_index();
+    config.accent = view_model->accent();
+    config.sound = view_model->sound_enabled();
+    config.volume = view_model->volume();
+
     std::string error;
     if (save_application_config(persistence->config_path, config, error)) {
-        LOG_INFO("saved config: {} (dark_mode={})",
-                 persistence->config_path,
-                 config.dark_mode ? "yes" : "no");
+        LOG_INFO("saved config: {} (bpm={})", persistence->config_path, config.bpm);
     } else {
         LOG_WARN("failed to save config {}: {}", persistence->config_path, error);
     }
@@ -169,10 +171,70 @@ private:
             return true;
         }
 
+        const bool is_home_page = view_model_.current_page() == model::AppPage::Home;
+        if (is_home_page) {
+            if (key == ' ' || key == LV_KEY_ENTER) {
+                if (!long_pressed) {
+                    view_model_.toggle_playing();
+                }
+                return true;
+            }
+            if (key == 't' || key == 'T') {
+                if (!long_pressed) {
+                    view_model_.tap_tempo();
+                }
+                return true;
+            }
+            if (key == 'm' || key == 'M') {
+                if (!long_pressed) {
+                    view_model_.toggle_sound();
+                }
+                return true;
+            }
+            if (key == 'a' || key == 'A') {
+                if (!long_pressed) {
+                    view_model_.toggle_accent();
+                }
+                return true;
+            }
+            // CP0 key spec: F/Z/X/C act as arrow keys outside of text input.
+            const bool up = key == LV_KEY_UP || key == 'f' || key == 'F';
+            const bool down = key == LV_KEY_DOWN || key == 'x' || key == 'X';
+            const bool left = key == LV_KEY_LEFT || key == 'z' || key == 'Z';
+            const bool right = key == LV_KEY_RIGHT || key == 'c' || key == 'C';
+            if (up || down || left || right) {
+                if (!long_pressed) {
+                    const int step = up || down ? 10 : 1;
+                    view_model_.adjust_bpm((up || right) ? step : -step);
+                }
+                return true;
+            }
+        }
+        else {
+            if (key >= '1' && key <= '7') {
+                if (!long_pressed) {
+                    view_model_.select_setting(static_cast<int>(key - '1'));
+                }
+                return true;
+            }
+            if (key == LV_KEY_UP || key == LV_KEY_PREV || key == 'f' || key == 'F') {
+                if (!long_pressed) {
+                    view_model_.cycle_setting(-1);
+                }
+                return true;
+            }
+            if (key == LV_KEY_DOWN || key == LV_KEY_NEXT || key == 'x' || key == 'X') {
+                if (!long_pressed) {
+                    view_model_.cycle_setting(1);
+                }
+                return true;
+            }
+        }
+
         const bool is_escape = key == LV_KEY_ESC;
         const bool is_home_exit_key =
             key == '4' &&
-            ((!long_pressed && view_model_.current_page() == model::AppPage::Apple) ||
+            ((!long_pressed && is_home_page) ||
              (long_pressed && exit_key_pressed_ == key));
         if (!is_escape && !is_home_exit_key) {
             return false;
@@ -186,7 +248,7 @@ private:
         }
         else {
             exit_key_pressed_ = key;
-            exit_armed_ = view_model_.current_page() == model::AppPage::Apple;
+            exit_armed_ = view_model_.current_page() == model::AppPage::Home;
             if (exit_armed_) {
                 toast_->show_persistent_highlighted("Hold ",
                                                     "ESC",
@@ -205,8 +267,8 @@ private:
         if (exit_armed_) {
             toast_->hide();
         } else if (key == LV_KEY_ESC &&
-                   view_model_.current_page() == model::AppPage::Butter) {
-            view_model_.show_apple_page();
+                   view_model_.current_page() == model::AppPage::Settings) {
+            view_model_.show_home_page();
         }
         exit_key_pressed_ = 0;
         exit_armed_ = false;
@@ -270,7 +332,7 @@ lv_display_t* init_device_display() {
 
 int Application::run() {
     logger::Logger::init();
-    logger::Logger::set_tag("template");
+    logger::Logger::set_tag("metronome");
 
     lv_init();
 
@@ -293,9 +355,18 @@ int Application::run() {
     std::string config_error;
     if (load_application_config(loaded_config_path, config, config_error)) {
         view_model.set_dark_mode(config.dark_mode);
-        LOG_INFO("loaded config: {} (dark_mode={})",
+        view_model.set_bpm(config.bpm);
+        view_model.set_beats_per_measure(config.beats_per_measure);
+        view_model.set_beat_unit(config.beat_unit);
+        view_model.set_subdivision_index(config.subdivision);
+        view_model.set_accent(config.accent);
+        view_model.set_sound_enabled(config.sound);
+        view_model.set_volume(config.volume);
+        LOG_INFO("loaded config: {} (bpm={}, {}/{})",
                  loaded_config_path,
-                 config.dark_mode ? "yes" : "no");
+                 config.bpm,
+                 config.beats_per_measure,
+                 config.beat_unit);
     } else {
         LOG_WARN("failed to load config {}: {}; using defaults", loaded_config_path, config_error);
     }
@@ -320,14 +391,19 @@ int Application::run() {
     simulator_frame.bind_dark_mode(view_model.dark_mode_subject());
 #endif
 
+    std::string audio_error;
+    if (!view_model.initialize_audio(audio_error)) {
+        LOG_WARN("metronome click audio unavailable: {}", audio_error);
+    }
+
     ScreenManager screen_manager(view_model, assets);
     screen_manager.start();
     ShortcutController shortcuts(view_model, assets);
 
-    DarkModePersistence dark_mode_persistence{user_config_path, view_model.is_dark_mode()};
-    auto* dark_mode_observer = lv_subject_add_observer(view_model.dark_mode_subject(),
-                                                        persist_dark_mode_observer,
-                                                        &dark_mode_persistence);
+    ConfigPersistence config_persistence{user_config_path, &view_model};
+    auto* config_observer = lv_subject_add_observer(view_model.config_revision_subject(),
+                                                    persist_config_observer,
+                                                    &config_persistence);
 
     bool running = true;
     auto* quit_observer = lv_subject_add_observer(view_model.quit_requested_subject(),
@@ -348,8 +424,8 @@ int Application::run() {
     if (quit_observer) {
         lv_observer_remove(quit_observer);
     }
-    if (dark_mode_observer) {
-        lv_observer_remove(dark_mode_observer);
+    if (config_observer) {
+        lv_observer_remove(config_observer);
     }
 
     return 0;

@@ -6,14 +6,13 @@
 
 include(GNUInstallDirs)
 
-set(APP_DISPLAY_NAME "TemplateApp" CACHE STRING "Human-readable application name used by launchers and package filename")
+set(APP_DISPLAY_NAME "Metronome" CACHE STRING "Human-readable application name used by launchers")
+set(APP_PACKAGE_NAME "metronome" CACHE STRING "Debian package name (lowercase letters, digits, ., +, -)")
 set(APP_DEBIAN_REVISION "rev1" CACHE STRING "Debian package revision/vendor suffix")
 set(APP_DEBIAN_ARCHITECTURE "arm64" CACHE STRING "Debian package architecture")
-# Deliberately a placeholder: the store rejects packages whose Maintainer is
-# still a template/M5Stack identity, so set your own name and email here.
-set(APP_MAINTAINER "TODO Your Name <todo@example.invalid>" CACHE STRING "Debian package maintainer")
-set(APP_PACKAGE_DESCRIPTION "CardputerZero LVGL template application" CACHE STRING "Debian package summary")
-set(APP_INSTALL_SYSTEMD_SERVICE ON CACHE BOOL "Install a systemd service file for embedded deployments")
+set(APP_MAINTAINER "nofacer <nofacer@outlook.com>" CACHE STRING "Debian package maintainer")
+set(APP_PACKAGE_DESCRIPTION "CardputerZero metronome with tap tempo and audible beats" CACHE STRING "Debian package summary")
+set(APP_INSTALL_SYSTEMD_SERVICE OFF CACHE BOOL "Install a systemd service file for embedded deployments (leave OFF: store apps must not require root)")
 
 set(APP_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/package")
 configure_file(
@@ -34,7 +33,7 @@ install(TARGETS ${PROJECT_NAME}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
-install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/config/template-app.conf"
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/config/metronome.conf"
     DESTINATION "/etc"
 )
 
@@ -53,7 +52,7 @@ install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/assets/images/"
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/assets/images/"
     DESTINATION "${CMAKE_INSTALL_DATADIR}/APPLaunch/share/images"
     FILES_MATCHING
-    PATTERN "template*.png"
+    PATTERN "metronome*.png"
 )
 
 install(FILES "${APP_GENERATED_DIR}/${PROJECT_NAME}.desktop"
@@ -77,17 +76,15 @@ install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/LICENSE.txt"
 set(CPACK_GENERATOR "DEB")
 set(CPACK_PACKAGING_INSTALL_PREFIX "/usr")
 set(CPACK_OUTPUT_FILE_PREFIX "${CMAKE_CURRENT_SOURCE_DIR}/dist")
-set(CPACK_PACKAGE_NAME "${APP_DISPLAY_NAME}")
+set(CPACK_PACKAGE_NAME "${APP_PACKAGE_NAME}")
 set(CPACK_PACKAGE_VENDOR "${APP_MAINTAINER}")
 set(CPACK_PACKAGE_CONTACT "${APP_MAINTAINER}")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "${APP_PACKAGE_DESCRIPTION}")
 set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
-set(CPACK_PACKAGE_FILE_NAME "${APP_DISPLAY_NAME}_${PROJECT_VERSION}_${APP_DEBIAN_REVISION}_${APP_DEBIAN_ARCHITECTURE}")
-set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/LICENSE.txt")
+set(CPACK_PACKAGE_FILE_NAME "${APP_PACKAGE_NAME}_${PROJECT_VERSION}-${APP_DEBIAN_REVISION}_${APP_DEBIAN_ARCHITECTURE}")
+set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
 
-string(TOLOWER "${APP_DISPLAY_NAME}" APP_DEBIAN_PACKAGE_NAME)
-string(REGEX REPLACE "[^a-z0-9+.-]" "-" APP_DEBIAN_PACKAGE_NAME "${APP_DEBIAN_PACKAGE_NAME}")
-set(CPACK_DEBIAN_PACKAGE_NAME "${APP_DEBIAN_PACKAGE_NAME}")
+set(CPACK_DEBIAN_PACKAGE_NAME "${APP_PACKAGE_NAME}")
 set(CPACK_DEBIAN_PACKAGE_VERSION "${PROJECT_VERSION}")
 set(CPACK_DEBIAN_PACKAGE_RELEASE "${APP_DEBIAN_REVISION}")
 set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "${APP_DEBIAN_ARCHITECTURE}")
@@ -97,6 +94,9 @@ set(CPACK_DEBIAN_PACKAGE_PRIORITY "optional")
 set(APP_DEBIAN_DEPENDS "libc6, libstdc++6, libgcc-s1, libfreetype6, libpng16-16, libjpeg62-turbo, zlib1g")
 if(FMT_INCLUDE_DIR AND FMT_LIBRARY)
     string(APPEND APP_DEBIAN_DEPENDS ", libfmt10")
+endif()
+if(APP_USE_ALSA)
+    string(APPEND APP_DEBIAN_DEPENDS ", libasound2")
 endif()
 set(CPACK_DEBIAN_PACKAGE_DEPENDS "${APP_DEBIAN_DEPENDS}")
 set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS OFF)

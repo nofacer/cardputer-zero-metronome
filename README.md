@@ -2,26 +2,26 @@
   <picture>
     <source
       media="(prefers-color-scheme: dark)"
-      srcset="./screenshot/app-simulator-dark-darwin.png"
+      srcset="./screenshot/app-dark.png"
     />
     <source
       media="(prefers-color-scheme: light)"
-      srcset="./screenshot/app-simulator-light-darwin.png"
+      srcset="./screenshot/app-light.png"
     />
   <img
-    src="./screenshot/app-simulator-light-darwin.png"
-    alt="CardputerZero Template running in the desktop simulator"
+    src="./screenshot/app-light.png"
+    alt="CardputerZero Metronome running in the desktop simulator"
     width="315"
   />
   </picture>
 </p>
 
 <div align="center">
-    <h1>CardputerZero Application Template</h1>
+    <h1>CardputerZero Metronome</h1>
 </div>
 
 <div align="center">
-  <p>A simple starter template for building embedded Linux GUI applications with LVGL and CMake.</p>
+  <p>A keyboard-driven metronome for CardputerZero, built with LVGL and CMake.</p>
 </div>
 
 <p align="center" style="margin: 20px 0; display: flex; justify-content: center; flex-wrap: wrap; gap: 12px;">
@@ -46,16 +46,41 @@ It is intended to be used as a clean development baseline: desktop builds use an
 In this example project, we used small MVVM-style structure around LVGL:
 
 - **UI layer**: screens and widgets are implemented with LVGL objects. `BaseScreen` owns the page root, title bar, nav bar, and page content. Widgets derive from `BaseWidgets` and expose a `build()` entry point.
-- **Data model**: `BaseModel` stores application state such as current page and theme mode.
-- **View model**: `BaseViewModel` exposes model state as LVGL observer subjects and provides UI actions such as page switching, counter updates, theme toggle, and quit request.
+- **Data model**: `BaseModel` stores application state such as current page and theme mode; `MetronomeModel` stores BPM, meter, subdivision, accent, volume, tap history, and beat position.
+- **View model**: `BaseViewModel` exposes model state as LVGL observer subjects and provides UI actions such as start/stop, tempo changes, tap tempo, settings editing, theme toggle, and quit request. A fine-grained LVGL timer drives beat timing and click playback.
 - **Reactive/data binding**: `src/reactive` wraps LVGL observer subjects and common bindings so labels, styles, flags, widget values, and events can be connected to application state.
 - **Data flow**: user input triggers widget callbacks, callbacks update `BaseViewModel`, view model publishes subjects, and bound UI objects refresh automatically through LVGL observers.
-- **Platform layer**: platform code owns Linux input integration and other hardware-facing services. The nav bar maps hardware/keyboard keys `4` to `8`, plus `ESC` for quit.
+- **Platform layer**: platform code owns Linux input integration and click-sound synthesis/playback. The nav bar maps keys `4` to `8`; desktop builds use SDL2 audio, embedded builds can optionally use ALSA.
 
-Current demo UI:
+## Metronome Features
 
-- Page 1: Hello World, font weight toggle, LVGL version info, light/dark theme toggle, page navigation.
-- Page 2: Counter page, increment/decrement actions, simple page navigation.
+- Tempo from 20 to 300 BPM, adjustable by 1 or 10 BPM steps.
+- Start/stop with beat reset and an accent on the first beat of each measure.
+- Time signatures from 1 to 12 beats per bar, with beat unit 1/2, 1/4, 1/8, or 1/16.
+- Subdivisions: off, eighths, triplets, or sixteenths, with softer click and dimmer indicator on off-beat steps.
+- Tap tempo: press `T` at least twice to set BPM from the average interval; tap history resets after a 3 second pause.
+- Visual beat indicator: one dot per beat, highlighted in the theme's accent color (warning color for the downbeat when accent is on).
+- Click sound with adjustable volume and an independent sound on/off switch; accent clicks use a higher pitch.
+- Settings page with live editing of meter, subdivision, accent, click, volume, and theme.
+- Light/dark themes, help overlay, screenshots, and settings persistence through `ApplicationConfig`.
+
+Keyboard controls:
+
+| Key | Home page | Settings page |
+| --- | --- | --- |
+| `SPACE` / `ENTER` / `5` | Start / stop | — |
+| `LEFT` / `Z`, `RIGHT` / `C` | BPM -1 / +1 | Decrease / increase selected value |
+| `UP` / `DOWN` | BPM -10 / +10 | Previous / next setting |
+| `T` / `7` | Tap tempo | — |
+| `M`, `A` | Toggle click sound / accent | — |
+| `1` - `7` | — | Select a setting row |
+| `6` | Toggle light / dark theme | — |
+| `8` | Open settings | — |
+| `ESC` | Hold to exit; press to leave settings | Back to metronome |
+| `H` / `HELP` | Help overlay | Help overlay |
+| `PRSC` | Screenshot | Screenshot |
+
+Click audio is generated at runtime: desktop simulators use SDL2, while device builds enable it with `-DAPP_USE_ALSA=ON` (requires libasound in the sysroot). If no backend is available, the app still runs and the visual metronome remains functional.
 
 ## Repository Layout
 
@@ -71,8 +96,8 @@ Current demo UI:
 │   ├── app/                # Application lifecycle, asset loading, screen management
 │   ├── config/             # LVGL config headers for desktop and device builds
 │   ├── logger/             # Project logging wrapper
-│   ├── model/              # Base application data model
-│   ├── platform/           # Platform input/hardware integration
+│   ├── model/              # Application data model and metronome core
+│   ├── platform/           # Platform input and click audio integration
 │   ├── reactive/           # LVGL observer subjects and binding helpers
 │   ├── view/               # Theme, UI constants, screens, and widgets
 │   │   ├── screens/        # Page-level LVGL screens
@@ -92,6 +117,10 @@ Current demo UI:
 - `src/config/lv_conf_desktop.h`: desktop LVGL rendering settings.
 - `src/config/lv_conf_cm0.h`: embedded Linux/CardputerZero LVGL settings.
 - `src/platform/linux_input.*`: Linux evdev keypad support and desktop SDL keyboard routing for nav buttons.
+- `src/platform/metronome_audio.*`: runtime click synthesis with SDL2 playback on desktop, optional ALSA playback on device, and a non-failing stub when no backend is configured.
+- `src/model/metronome_model.*`: tempo, meter, subdivision, tap tempo, and beat stepping.
+- `src/view/widgets/beat_indicator.*`: beat dots bound to playback subjects.
+- `assets/images/metronome.svg`: vector source of the application icon; `metronome.png` is the 256×256 PNG generated from it for the store and launcher.
 - `src/reactive/subjects.*`: typed wrappers around LVGL subjects.
 - `src/reactive/bindings.*`: helper bindings for labels, theme, widget values, flags, states, and events.
 - `src/view/widgets/navbar.*`: bottom navigation bar and icon-button action mapping.
@@ -104,12 +133,16 @@ Common CMake cache options:
 | Option | Default | Description |
 | --- | --- | --- |
 | `USE_DESKTOP` | `ON` | Build SDL desktop simulator when `ON`; build embedded Linux target when `OFF`. |
-| `APP_NAME` | `template_app` | Application name used by installed asset lookup. |
+| `APP_NAME` | `metronome` | Application name used by installed asset lookup. |
+| `APP_DISPLAY_NAME` | `Metronome` | Human-readable launcher name. |
+| `APP_PACKAGE_NAME` | `metronome` | Debian package name (lowercase letters, digits, `.`, `+`, `-`). |
+| `APP_MAINTAINER` | `nofacer <nofacer@outlook.com>` | Debian package maintainer. |
 | `APP_ASSETS_ROOT` | empty | Optional runtime asset root. Expected layout includes `fonts/`, `images/`, etc. |
-| `APP_CONFIG_FILE` | platform default | Optional config path. Defaults to `config/template-app.conf` for desktop builds and `/etc/template-app.conf` for device builds. |
+| `APP_CONFIG_FILE` | platform default | Optional config path. Defaults to `config/metronome.conf` for desktop builds and `/etc/metronome.conf` for device builds. |
 | `APP_KEY_INPUT_DEVICE` | empty | Optional Linux evdev device path, e.g. `/dev/input/event0`. Empty means auto-scan `/dev/input/event*`. |
 | `APP_FRAMEBUFFER_DEVICE` | `/dev/fb0` | Linux framebuffer device used by embedded builds when `APP_USE_DRM=OFF`. |
 | `APP_USE_DRM` | `OFF` | Use LVGL's Linux DRM/KMS backend instead of fbdev for embedded builds. |
+| `APP_USE_ALSA` | `OFF` | Enable ALSA click output for embedded builds. Desktop builds always use SDL2 audio. |
 | `APP_DRM_DEVICE` | `/dev/dri/card0` | DRM device path used when `APP_USE_DRM=ON`. |
 | `APP_DRM_CONNECTOR_ID` | `-1` | DRM connector id used when `APP_USE_DRM=ON`; `-1` auto-selects. |
 
@@ -119,7 +152,7 @@ Asset lookup order:
 2. source-tree `assets/` for development
 3. `/usr/share/<APP_NAME>/` for installed deployments
 
-Theme startup behavior is configured in `config/template-app.conf`:
+Theme startup behavior is configured in `config/metronome.conf`:
 
 ```ini
 [application]
@@ -127,9 +160,9 @@ dark_mode=yes
 ```
 
 Set `dark_mode` to `yes` or `no`. The parser also accepts `true`/`false` and `1`/`0`.
-Installed device builds use `/etc/template-app.conf` as the system default. Changing the theme
+Installed device builds use `/etc/metronome.conf` as the system default. Changing the theme
 from the navigation bar (keyboard shortcut `6`) writes a per-user override to
-`$XDG_CONFIG_HOME/template-app/template-app.conf`, or `~/.config/template-app/template-app.conf`
+`$XDG_CONFIG_HOME/metronome/metronome.conf`, or `~/.config/metronome/metronome.conf`
 when `XDG_CONFIG_HOME` is not set. The per-user file takes precedence on the next launch.
 
 ## Desktop Builds
@@ -190,9 +223,9 @@ cmake --build --preset linux-x86-64-dbg
 Run:
 
 ```shell
-./build/linux-x86-64/Debug/template_app
+./build/linux-x86-64/Debug/metronome
 # or launch release build
-# ./build/linux-x86-64/Release/template_app
+# ./build/linux-x86-64/Release/metronome
 ```
 
 ### macOS Desktop
@@ -235,9 +268,9 @@ cmake --build --preset darwin-arm64-dbg
 Run:
 
 ```shell
-./build/darwin-arm64/Debug/template_app
+./build/darwin-arm64/Debug/metronome
 # or launch release build
-# ./build/darwin-arm64/Release/template_app
+# ./build/darwin-arm64/Release/metronome
 ```
 
 For Intel macOS, use the `darwin-x86-64` configure preset and matching build preset:
@@ -247,9 +280,9 @@ cmake --preset darwin-x86-64
 cmake --build --preset darwin-x86-64-dbg
 # alternatively, you can run release build
 # cmake --build --preset darwin-x86-64-rel
-./build/darwin-x86-64/Debug/template_app
+./build/darwin-x86-64/Debug/metronome
 # or launch release build
-# ./build/darwin-x86-64/Release/template_app
+# ./build/darwin-x86-64/Release/metronome
 ```
 
 ### Windows Desktop
@@ -315,11 +348,11 @@ Configure and build with MSVC:
 ```powershell
 cmake --preset win32-msvc
 cmake --build --preset win32-msvc-dbg
-.\build\msvc\Debug\template_app.exe
+.\build\msvc\Debug\metronome.exe
 
 # alternatively for release build
 # cmake --build --preset win32-msvc-rel
-# .\build\msvc\Release\template_app.exe
+# .\build\msvc\Release\metronome.exe
 ```
 
 Configure and build with MinGW-w64:
@@ -344,11 +377,11 @@ Configure and build with MinGW-w64:
 ```powershell
 cmake --preset win32-mingw64
 cmake --build --preset win32-mingw64-dbg
-.\build\mingw64\Debug\template_app.exe
+.\build\mingw64\Debug\metronome.exe
 
 # alternatively for release build
 # cmake --build --preset win32-mingw64-rel
-#.\build\mingw64\Release\template_app.exe
+#.\build\mingw64\Release\metronome.exe
 ```
 > [!NOTE]
 > `VCPKG` will handle the dependencies during CMake configuration process automatically, 
@@ -402,7 +435,7 @@ By default, the debian package is copied to '$HOME' folder, normally it's under 
 On your device, install the copied package with `apt` and replace the package file name with the one you copied:
 
 ```shell
-sudo apt install --no-install-recommends ./TemplateApp_0.2.1_rev1_arm64.deb
+sudo apt install --no-install-recommends ./metronome_0.2.1-rev1_arm64.deb
 ```
 
 
@@ -414,20 +447,20 @@ The first page bottom nav bar maps hardware/keyboard keys from left to right:
 
 | Key | Nav item |
 | --- | --- |
-| `4` | First icon button |
-| `5` | Second icon button |
-| `6` | Third icon button |
-| `7` | Fourth icon button |
-| `8` | Fifth icon button |
-| `ESC` | First icon button / quit |
+| `4` | Exit (hold) |
+| `5` | Start / stop |
+| `6` | Light / dark theme |
+| `7` | Tap tempo |
+| `8` | Open settings |
 
-The counter page uses direct keyboard shortcuts:
+The settings page uses direct keyboard shortcuts:
 
 | Key | Action |
 | --- | --- |
-| `ESC` | Return to the first page |
-| `Left` | Decrease the counter |
-| `Right` | Increase the counter |
+| `1` - `7` | Select a setting row |
+| `Left` / `Z`, `Right` / `C` | Decrease / increase the selected value |
+| `Up` / `Down` | Previous / next setting |
+| `ESC` | Return to the metronome |
 
 ### Adding a Screen
 
@@ -478,20 +511,20 @@ Debian packages are produced with CPack and written to `dist/`. The package file
 Default example:
 
 ```text
-dist/TemplateApp_0.2.1_rev1_arm64.deb
+dist/metronome_0.2.1-rev1_arm64.deb
 ```
 
 Package layout:
 
 | Path | Content |
 | --- | --- |
-| `/usr/bin/template_app` | Application executable. |
-| `/etc/template-app.conf` | System-default application settings, including the startup theme. |
-| `/usr/share/template_app/` | Runtime assets: fonts, images, audio. |
-| `/usr/share/APPLaunch/applications/template_app.desktop` | APPLaunch launcher entry. |
-| `/usr/share/APPLaunch/share/images/template*.png` | APPLaunch launcher icons/fallbacks. |
-| `/usr/lib/systemd/system/template_app.service` | Optional systemd service for embedded autostart. |
-| `/usr/share/doc/template_app/` | README and third-party asset license notes. |
+| `/usr/bin/metronome` | Application executable. |
+| `/etc/metronome.conf` | System-default application settings, including the startup theme. |
+| `/usr/share/metronome/` | Runtime assets: fonts, images, audio. |
+| `/usr/share/APPLaunch/applications/metronome.desktop` | APPLaunch launcher entry. |
+| `/usr/share/APPLaunch/share/images/metronome*.png` | APPLaunch launcher icons/fallbacks. |
+| `/usr/lib/systemd/system/metronome.service` | Optional systemd service for embedded autostart. |
+| `/usr/share/doc/metronome/` | README and third-party asset license notes. |
 
 Build and package:
 

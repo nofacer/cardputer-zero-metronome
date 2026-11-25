@@ -9,14 +9,13 @@
 namespace model {
 
 enum class AppPage {
-    Apple  = 0,
-    Butter = 1,
+    Home     = 0,
+    Settings = 1,
 };
 
 class BaseModel {
 public:
     const char* app_title() const;
-    const char* greeting() const;
 
     bool dark_mode() const;
     void set_dark_mode(bool enabled);
@@ -28,7 +27,7 @@ public:
 
 private:
     bool dark_mode_ = false;
-    AppPage current_page_ = AppPage::Apple;
+    AppPage current_page_ = AppPage::Home;
 };
 
 } // namespace model

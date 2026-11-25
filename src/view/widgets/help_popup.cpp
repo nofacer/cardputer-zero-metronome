@@ -21,18 +21,18 @@ struct HelpRow {
     const char* action;
 };
 
-constexpr std::array<HelpRow, 5> kAppleRows = {{
+constexpr std::array<HelpRow, 5> kHomeRows = {{
     {"HOLD ESC / 4", "Exit"},
-    {"5", "Text weight"},
-    {"6", "Light / dark"},
-    {"7", "Version info"},
-    {"8", "Open counter"},
+    {"SPACE / 5", "Start / stop"},
+    {"F/Z/X/C", "Tempo +/-10 (Z/C +/-1)"},
+    {"T / 7", "Tap tempo"},
+    {"M / A / 8", "Sound / accent / setup"},
 }};
 
-constexpr std::array<HelpRow, 3> kButterRows = {{
-    {"ESC", "Back to home"},
-    {"Z / LEFT", "Decrease"},
-    {"C / RIGHT", "Increase"},
+constexpr std::array<HelpRow, 3> kSettingsRows = {{
+    {"ESC", "Back to metronome"},
+    {"1 - 7 / UP DOWN", "Select setting"},
+    {"Z LEFT / C RIGHT", "Adjust value"},
 }};
 
 } // namespace
@@ -117,8 +117,8 @@ void HelpPopup::build() {
     footer_ = lv_label_create(panel_);
     lv_label_set_text(footer_, "HELP / ESC  Close   PRSC  Screenshot");
     lv_label_set_long_mode(footer_, LV_LABEL_LONG_CLIP);
-    auto* footer_font = assets_.load_standard_font(10);
-    lv_obj_set_style_text_font(footer_, footer_font ? footer_font : &lv_font_montserrat_10, 0);
+    auto* footer_font = assets_.load_standard_font(12, app::StandardFontWeight::Regular);
+    lv_obj_set_style_text_font(footer_, footer_font ? footer_font : &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_align(footer_, LV_TEXT_ALIGN_LEFT, 0);
     lv_obj_set_size(footer_, LV_SIZE_CONTENT, 12);
     lv_obj_align(footer_, LV_ALIGN_BOTTOM_LEFT, 12, -7);
@@ -156,16 +156,16 @@ bool HelpPopup::visible() const {
 }
 
 void HelpPopup::update_rows(model::AppPage page) {
-    const bool butter = page == model::AppPage::Butter;
-    lv_label_set_text(page_badge_, butter ? "COUNTER" : "HOME");
+    const bool settings = page == model::AppPage::Settings;
+    lv_label_set_text(page_badge_, settings ? "SETTINGS" : "METRONOME");
     for (std::size_t i = 0; i < rows_.size(); ++i) {
-        const bool row_visible = butter ? i < kButterRows.size() : i < kAppleRows.size();
+        const bool row_visible = settings ? i < kSettingsRows.size() : i < kHomeRows.size();
         if (!row_visible) {
             lv_obj_add_flag(rows_[i].row, LV_OBJ_FLAG_HIDDEN);
             continue;
         }
         lv_obj_remove_flag(rows_[i].row, LV_OBJ_FLAG_HIDDEN);
-        const auto& row = butter ? kButterRows[i] : kAppleRows[i];
+        const auto& row = settings ? kSettingsRows[i] : kHomeRows[i];
         lv_label_set_text(rows_[i].key, row.key);
         lv_label_set_text(rows_[i].action, row.action);
     }

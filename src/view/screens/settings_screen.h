@@ -10,9 +10,9 @@
 
 namespace screen {
 
-class ButterScreen : public BaseScreen {
+class SettingsScreen : public BaseScreen {
 public:
-    ButterScreen(viewmodel::BaseViewModel& view_model, app::AssetManager& assets);
+    SettingsScreen(viewmodel::BaseViewModel& view_model, app::AssetManager& assets);
 
 private:
     void build_content(lv_obj_t* content) override;

@@ -8,8 +8,11 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <string>
+#include <utility>
 #include <vector>
 
 namespace app {
@@ -43,6 +46,22 @@ bool parse_bool(const std::string& value, bool& result) {
         return true;
     }
     return false;
+}
+
+bool parse_int(const std::string& value, int& result) {
+    const auto normalized = trim(value);
+    if (normalized.empty()) {
+        return false;
+    }
+
+    char* end = nullptr;
+    const long parsed = std::strtol(normalized.c_str(), &end, 10);
+    if (end == normalized.c_str() || *end != '\0' || parsed < -2147483647L || parsed > 2147483647L) {
+        return false;
+    }
+
+    result = static_cast<int>(parsed);
+    return true;
 }
 
 bool is_section(const std::string& line, const std::string& expected) {
@@ -90,9 +109,56 @@ bool load_application_config(const std::string& path,
         }
 
         const auto key = lowercase(trim(line.substr(0, separator)));
-        if (section == "application" && key == "dark_mode") {
-            if (!parse_bool(line.substr(separator + 1), config.dark_mode)) {
+        const auto value = line.substr(separator + 1);
+        if (section != "application") {
+            continue;
+        }
+
+        if (key == "dark_mode") {
+            if (!parse_bool(value, config.dark_mode)) {
                 error = "invalid dark_mode value at line " + std::to_string(line_number);
+                return false;
+            }
+        }
+        else if (key == "bpm") {
+            if (!parse_int(value, config.bpm)) {
+                error = "invalid bpm value at line " + std::to_string(line_number);
+                return false;
+            }
+        }
+        else if (key == "beats_per_measure") {
+            if (!parse_int(value, config.beats_per_measure)) {
+                error = "invalid beats_per_measure value at line " + std::to_string(line_number);
+                return false;
+            }
+        }
+        else if (key == "beat_unit") {
+            if (!parse_int(value, config.beat_unit)) {
+                error = "invalid beat_unit value at line " + std::to_string(line_number);
+                return false;
+            }
+        }
+        else if (key == "subdivision") {
+            if (!parse_int(value, config.subdivision)) {
+                error = "invalid subdivision value at line " + std::to_string(line_number);
+                return false;
+            }
+        }
+        else if (key == "accent") {
+            if (!parse_bool(value, config.accent)) {
+                error = "invalid accent value at line " + std::to_string(line_number);
+                return false;
+            }
+        }
+        else if (key == "sound") {
+            if (!parse_bool(value, config.sound)) {
+                error = "invalid sound value at line " + std::to_string(line_number);
+                return false;
+            }
+        }
+        else if (key == "volume") {
+            if (!parse_int(value, config.volume)) {
+                error = "invalid volume value at line " + std::to_string(line_number);
                 return false;
             }
         }
@@ -124,43 +190,74 @@ bool save_application_config(const std::string& path,
         lines.push_back(line);
     }
 
+    const auto yes_no = [](bool value) { return std::string(value ? "yes" : "no"); };
+    const std::vector<std::pair<std::string, std::string>> values = {
+        {"dark_mode", yes_no(config.dark_mode)},
+        {"bpm", std::to_string(config.bpm)},
+        {"beats_per_measure", std::to_string(config.beats_per_measure)},
+        {"beat_unit", std::to_string(config.beat_unit)},
+        {"subdivision", std::to_string(config.subdivision)},
+        {"accent", yes_no(config.accent)},
+        {"sound", yes_no(config.sound)},
+        {"volume", std::to_string(config.volume)},
+    };
+
     std::vector<std::string> updated;
+    std::vector<bool> written(values.size(), false);
     bool in_application_section = false;
     bool found_application_section = false;
-    bool wrote_dark_mode = false;
-    const std::string dark_mode_line = config.dark_mode ? "dark_mode=yes" : "dark_mode=no";
+
+    const auto append_missing = [&]() {
+        for (std::size_t i = 0; i < values.size(); ++i) {
+            if (written[i]) {
+                continue;
+            }
+            updated.push_back(values[i].first + "=" + values[i].second);
+            written[i] = true;
+        }
+    };
 
     for (const auto& current_line : lines) {
         const auto normalized = trim(current_line);
         const bool section_header = normalized.size() >= 2 && normalized.front() == '[' &&
                                     normalized.back() == ']';
         if (section_header) {
-            if (in_application_section && !wrote_dark_mode) {
-                updated.push_back(dark_mode_line);
-                wrote_dark_mode = true;
+            if (in_application_section) {
+                append_missing();
             }
             in_application_section = is_section(current_line, "application");
             found_application_section = found_application_section || in_application_section;
         }
 
-        if (in_application_section && is_key(current_line, "dark_mode")) {
-            if (!wrote_dark_mode) {
-                updated.push_back(dark_mode_line);
-                wrote_dark_mode = true;
+        if (in_application_section) {
+            bool replaced = false;
+            for (std::size_t i = 0; i < values.size() && !replaced; ++i) {
+                if (!is_key(current_line, values[i].first)) {
+                    continue;
+                }
+                if (!written[i]) {
+                    updated.push_back(values[i].first + "=" + values[i].second);
+                    written[i] = true;
+                }
+                replaced = true;
             }
-            continue;
+            if (replaced) {
+                continue;
+            }
         }
+
         updated.push_back(current_line);
     }
 
-    if (!wrote_dark_mode) {
+    if (in_application_section) {
+        append_missing();
+    }
+    if (!found_application_section) {
         if (!updated.empty() && !updated.back().empty()) {
             updated.emplace_back();
         }
-        if (!found_application_section) {
-            updated.emplace_back("[application]");
-        }
-        updated.push_back(dark_mode_line);
+        updated.emplace_back("[application]");
+        append_missing();
     }
 
     std::ofstream output(path, std::ios::trunc);

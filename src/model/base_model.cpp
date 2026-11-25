@@ -9,11 +9,7 @@
 namespace model {
 
 const char* BaseModel::app_title() const {
-    return "Template App";
-}
-
-const char* BaseModel::greeting() const {
-    return "Hello World";
+    return "Metronome";
 }
 
 bool BaseModel::dark_mode() const {
@@ -32,13 +28,12 @@ AppPage BaseModel::current_page() const {
     return current_page_;
 }
 
-
 void BaseModel::set_current_page(AppPage page) {
     current_page_ = page;
 }
 
 void BaseModel::toggle_page() {
-    current_page_ = current_page_ == AppPage::Apple ? AppPage::Butter : AppPage::Apple;
+    current_page_ = current_page_ == AppPage::Home ? AppPage::Settings : AppPage::Home;
 }
 
 } // namespace model

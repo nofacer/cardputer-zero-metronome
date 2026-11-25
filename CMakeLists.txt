@@ -6,7 +6,7 @@
 
 cmake_minimum_required(VERSION 3.31)
 
-project(template_app VERSION 0.2.1 LANGUAGES C CXX)
+project(metronome VERSION 0.2.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -20,12 +20,13 @@ set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
 set(USE_DESKTOP ON CACHE BOOL "Build the desktop emulator target with LVGL SDL support")
 set(APP_NAME "${PROJECT_NAME}" CACHE STRING "Application name used for installed asset lookup")
 set(APP_ASSETS_ROOT "" CACHE PATH "Optional runtime assets root. Expected subdirectories include fonts/")
-set(APP_CONFIG_FILE "" CACHE FILEPATH "Application config file; defaults to the repository file on desktop and /etc/template-app.conf on device")
+set(APP_CONFIG_FILE "" CACHE FILEPATH "Application config file; defaults to the repository file on desktop and /etc/metronome.conf on device")
 set(APP_KEY_INPUT_DEVICE "" CACHE STRING "Optional Linux evdev keyboard/keypad device path, e.g. /dev/input/event0")
 set(APP_FRAMEBUFFER_DEVICE "/dev/fb0" CACHE STRING "Linux framebuffer device path used by embedded builds")
 set(APP_DRM_DEVICE "/dev/dri/card0" CACHE STRING "Linux DRM device path used when APP_USE_DRM=ON")
 set(APP_DRM_CONNECTOR_ID "-1" CACHE STRING "DRM connector id used when APP_USE_DRM=ON; -1 auto-selects")
 set(APP_USE_DRM OFF CACHE BOOL "Enable LVGL Linux DRM/KMS backend for embedded Linux builds")
+set(APP_USE_ALSA OFF CACHE BOOL "Enable ALSA click output for embedded Linux builds (desktop uses SDL2 audio)")
 set(CM0_ALLOW_FETCH_DEPS ON CACHE BOOL "Allow downloading missing CM0 BSP/dependencies during cross builds")
 # Export compile commands
 # Used for IDE IntelliSense
@@ -33,9 +34,9 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE BOOL "Export compile_commands.json" F
 
 if(NOT APP_CONFIG_FILE)
     if(USE_DESKTOP)
-        set(APP_CONFIG_FILE "${CMAKE_CURRENT_SOURCE_DIR}/config/template-app.conf")
+        set(APP_CONFIG_FILE "${CMAKE_CURRENT_SOURCE_DIR}/config/metronome.conf")
     else()
-        set(APP_CONFIG_FILE "/etc/template-app.conf")
+        set(APP_CONFIG_FILE "/etc/metronome.conf")
     endif()
 endif()
 
@@ -243,6 +244,23 @@ else()
         message(STATUS "CM0 DRM display support enabled")
     endif()
 
+    if(APP_USE_ALSA)
+        cm0_find_header(ALSA_INCLUDE_DIR alsa/asoundlib.h
+            "${CM0_SYSROOT}/usr/include"
+            "${CM0_SYSROOT}/usr/local/include"
+        )
+        cm0_find_library(ALSA_LIBRARY asound)
+        if(NOT ALSA_INCLUDE_DIR OR NOT ALSA_LIBRARY)
+            message(FATAL_ERROR
+                "APP_USE_ALSA=ON but libasound headers/library were not found in BSP sysroot.\n"
+                "Provide them in ${CM0_SYSROOT} or disable with -DAPP_USE_ALSA=OFF."
+            )
+        endif()
+        cm0_add_imported_library(CM0::ALSA "${ALSA_LIBRARY}" "${ALSA_INCLUDE_DIR}")
+        list(APPEND LVGL_LIBS CM0::ALSA)
+        message(STATUS "CM0 ALSA click output enabled")
+    endif()
+
     cm0_find_header(FREETYPE_INCLUDE_DIR ft2build.h
         "${CM0_SYSROOT}/usr/include/freetype2"
         "${CM0_SYSROOT}/usr/include"
@@ -369,6 +387,7 @@ else()
         PUBLIC
             USE_DESKTOP=0
             APP_USE_DRM=$<BOOL:${APP_USE_DRM}>
+            APP_USE_ALSA=$<BOOL:${APP_USE_ALSA}>
     )
 
     # fix: issue of compiling lvgl on gcc >= 15.0
