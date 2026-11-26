@@ -8,21 +8,22 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
-#include <cstdlib>
 #include <utility>
 #include <vector>
 
 #if USE_DESKTOP
 #include <SDL.h>
-#elif defined(APP_USE_ALSA) && APP_USE_ALSA
-#include <alsa/asoundlib.h>
-
+#else
 #include <condition_variable>
 #include <mutex>
 #include <queue>
 #include <thread>
+
+#define MINIAUDIO_IMPLEMENTATION
+#include "vendor/miniaudio.h"
 #endif
 
 namespace platform::audio {
@@ -52,6 +53,18 @@ int16_t scale_sample(int16_t sample, int volume) {
     return static_cast<int16_t>(static_cast<float>(sample) * gain);
 }
 
+#if !USE_DESKTOP
+std::vector<float> to_stereo_float(const std::vector<int16_t>& samples) {
+    std::vector<float> frames(samples.size() * 2U);
+    for (std::size_t i = 0; i < samples.size(); ++i) {
+        const float value = static_cast<float>(samples[i]) / 32768.0F;
+        frames[i * 2U] = value;
+        frames[i * 2U + 1U] = value;
+    }
+    return frames;
+}
+#endif
+
 } // namespace
 
 struct ClickSynth::Impl {
@@ -78,7 +91,7 @@ struct ClickSynth::Impl {
         if (requested != impl->last_sequence) {
             impl->last_sequence = requested;
             impl->current = impl->accent.load(std::memory_order_relaxed) ? &impl->strong_click
-                                                                        : &impl->normal_click;
+                                                                         : &impl->normal_click;
             impl->position = 0;
         }
 
@@ -95,10 +108,25 @@ struct ClickSynth::Impl {
             output[i] = scale_sample(samples[impl->position++], volume);
         }
     }
-#elif defined(APP_USE_ALSA) && APP_USE_ALSA
-    snd_pcm_t* pcm{nullptr};
-    std::vector<int16_t> normal_click;
-    std::vector<int16_t> strong_click;
+#else
+    // CardputerZero's speaker is owned by pipewire-pulse; like the official
+    // launcher, use miniaudio's PulseAudio backend instead of raw ALSA devices.
+    ma_context context{};
+    ma_engine engine{};
+    ma_audio_buffer normal_buffer{};
+    ma_audio_buffer strong_buffer{};
+    ma_sound normal_sound{};
+    ma_sound strong_sound{};
+    std::vector<float> normal_pcm;
+    std::vector<float> strong_pcm;
+    bool context_ready{false};
+    bool engine_ready{false};
+    bool normal_sound_ready{false};
+    bool strong_sound_ready{false};
+    bool normal_buffer_ready{false};
+    bool strong_buffer_ready{false};
+    std::chrono::steady_clock::time_point warmup_deadline{};
+
     std::atomic<int> volume{70};
     std::mutex mutex;
     std::condition_variable wakeup;
@@ -121,26 +149,27 @@ struct ClickSynth::Impl {
                 pending.pop();
             }
 
-            const auto& samples = accent_click ? strong_click : normal_click;
-            int current_volume = volume.load(std::memory_order_relaxed);
-            if (soft_click) {
-                current_volume = current_volume * 45 / 100;
+            if (warmup_deadline != std::chrono::steady_clock::time_point{}) {
+                std::this_thread::sleep_until(warmup_deadline);
+                warmup_deadline = {};
             }
-            std::vector<int16_t> framed(samples.size());
-            std::transform(samples.begin(), samples.end(), framed.begin(), [&](int16_t sample) {
-                return scale_sample(sample, current_volume);
-            });
 
-            const snd_pcm_sframes_t written =
-                snd_pcm_writei(pcm, framed.data(), static_cast<snd_pcm_uframes_t>(framed.size()));
-            if (written == -EPIPE) {
-                snd_pcm_prepare(pcm);
-                snd_pcm_writei(pcm, framed.data(), static_cast<snd_pcm_uframes_t>(framed.size()));
+            auto& sound = accent_click ? strong_sound : normal_sound;
+            const bool sound_ready = accent_click ? strong_sound_ready : normal_sound_ready;
+            if (!sound_ready) {
+                continue;
             }
+
+            float gain = static_cast<float>(std::clamp(volume.load(std::memory_order_relaxed), 0, 100)) /
+                         100.0F;
+            if (soft_click) {
+                gain *= 0.45F;
+            }
+            ma_sound_set_volume(&sound, gain);
+            ma_sound_seek_to_pcm_frame(&sound, 0);
+            ma_sound_start(&sound);
         }
     }
-#else
-    std::atomic<int> volume{70};
 #endif
 };
 
@@ -184,70 +213,87 @@ bool ClickSynth::initialize(std::string& error) {
     impl_->strong_click = make_click(obtained.freq, 1320.0F, 55.0F);
     SDL_PauseAudioDevice(impl_->device, 0);
     return true;
-#elif defined(APP_USE_ALSA) && APP_USE_ALSA
-    if (impl_->pcm) {
-        return true;
-    }
-
-    // Some boards have no usable "default" PCM. Try common alternatives and
-    // allow an explicit override via METRONOME_ALSA_DEVICE (e.g. "hw:1,0").
-    std::vector<std::string> candidates;
-    if (const char* requested = std::getenv("METRONOME_ALSA_DEVICE")) {
-        if (*requested != '\0') {
-            candidates.emplace_back(requested);
-        }
-    }
-    candidates.emplace_back("default");
-    for (int card = 0; card <= 1; ++card) {
-        const std::string suffix = ",0";
-        candidates.emplace_back("plughw:" + std::to_string(card) + suffix);
-        candidates.emplace_back("hw:" + std::to_string(card) + suffix);
-    }
-
-    std::string failures;
-    for (const auto& name : candidates) {
-        snd_pcm_t* pcm = nullptr;
-        const int result = snd_pcm_open(&pcm, name.c_str(), SND_PCM_STREAM_PLAYBACK, 0);
-        if (result < 0 || !pcm) {
-            failures += name + ": " + snd_strerror(result) + "; ";
-            continue;
-        }
-
-        const int params_result = snd_pcm_set_params(pcm,
-                                                     SND_PCM_FORMAT_S16_LE,
-                                                     SND_PCM_ACCESS_RW_INTERLEAVED,
-                                                     1,
-                                                     kSampleRate,
-                                                     1,
-                                                     50000);
-        if (params_result < 0) {
-            failures += name + ": setup " + snd_strerror(params_result) + "; ";
-            snd_pcm_close(pcm);
-            continue;
-        }
-
-        impl_->pcm = pcm;
-        impl_->normal_click = make_click(kSampleRate, 880.0F, 45.0F);
-        impl_->strong_click = make_click(kSampleRate, 1320.0F, 55.0F);
-        impl_->worker = std::thread(&Impl::run, impl_.get());
-        return true;
-    }
-
-    error = "ALSA open/setup failed: " + failures;
-    return false;
 #else
-    error = "audio output is not enabled in this build";
-    return false;
+    if (impl_->engine_ready) {
+        return true;
+    }
+
+    ma_backend backends[] = {ma_backend_pulseaudio};
+    ma_result result = ma_context_init(backends, 1, nullptr, &impl_->context);
+    if (result != MA_SUCCESS) {
+        error = std::string("PulseAudio context init failed: ") + ma_result_description(result);
+        return false;
+    }
+    impl_->context_ready = true;
+
+    ma_engine_config config = ma_engine_config_init();
+    config.pContext = &impl_->context;
+    config.channels = 2;
+    config.sampleRate = kSampleRate;
+    config.periodSizeInMilliseconds = 20;
+    result = ma_engine_init(&config, &impl_->engine);
+    if (result != MA_SUCCESS) {
+        error = std::string("PulseAudio engine init failed: ") + ma_result_description(result);
+        ma_context_uninit(&impl_->context);
+        impl_->context_ready = false;
+        return false;
+    }
+    impl_->engine_ready = true;
+
+    impl_->normal_pcm = to_stereo_float(make_click(kSampleRate, 880.0F, 45.0F));
+    impl_->strong_pcm = to_stereo_float(make_click(kSampleRate, 1320.0F, 55.0F));
+
+    auto make_sound = [&](std::vector<float>& pcm,
+                          ma_audio_buffer& buffer,
+                          bool& buffer_ready,
+                          ma_sound& sound,
+                          bool& sound_ready) {
+        ma_audio_buffer_config buffer_config = ma_audio_buffer_config_init(
+            ma_format_f32, 2, pcm.size() / 2U, pcm.data(), nullptr);
+        buffer_config.sampleRate = kSampleRate;
+        if (ma_audio_buffer_init(&buffer_config, &buffer) != MA_SUCCESS) {
+            return;
+        }
+        buffer_ready = true;
+        if (ma_sound_init_from_data_source(&impl_->engine,
+                                           reinterpret_cast<ma_data_source*>(&buffer),
+                                           MA_SOUND_FLAG_NO_SPATIALIZATION,
+                                           nullptr,
+                                           &sound) == MA_SUCCESS) {
+            sound_ready = true;
+        }
+    };
+
+    make_sound(impl_->normal_pcm,
+               impl_->normal_buffer,
+               impl_->normal_buffer_ready,
+               impl_->normal_sound,
+               impl_->normal_sound_ready);
+    make_sound(impl_->strong_pcm,
+               impl_->strong_buffer,
+               impl_->strong_buffer_ready,
+               impl_->strong_sound,
+               impl_->strong_sound_ready);
+
+    if (!impl_->normal_sound_ready && !impl_->strong_sound_ready) {
+        error = "PulseAudio sound initialization failed";
+        shutdown();
+        return false;
+    }
+
+    // The first frames after a PulseAudio stream opens can be swallowed while
+    // the sink settles (same warmup the official launcher uses).
+    impl_->warmup_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(300);
+    impl_->worker = std::thread(&Impl::run, impl_.get());
+    return true;
 #endif
 }
 
 bool ClickSynth::available() const {
 #if USE_DESKTOP
     return impl_->device != 0;
-#elif defined(APP_USE_ALSA) && APP_USE_ALSA
-    return impl_->pcm != nullptr;
 #else
-    return false;
+    return impl_->engine_ready;
 #endif
 }
 
@@ -263,8 +309,8 @@ void ClickSynth::play_click(bool accent, bool soft) {
     impl_->accent.store(accent, std::memory_order_relaxed);
     impl_->soft.store(soft, std::memory_order_relaxed);
     impl_->sequence.fetch_add(1, std::memory_order_release);
-#elif defined(APP_USE_ALSA) && APP_USE_ALSA
-    if (!impl_->pcm) {
+#else
+    if (!impl_->engine_ready) {
         return;
     }
     {
@@ -272,9 +318,6 @@ void ClickSynth::play_click(bool accent, bool soft) {
         impl_->pending.emplace(accent, soft);
     }
     impl_->wakeup.notify_one();
-#else
-    (void)accent;
-    (void)soft;
 #endif
 }
 
@@ -289,7 +332,7 @@ void ClickSynth::shutdown() {
         SDL_QuitSubSystem(SDL_INIT_AUDIO);
         impl_->audio_subsystem_owned = false;
     }
-#elif defined(APP_USE_ALSA) && APP_USE_ALSA
+#else
     {
         std::lock_guard<std::mutex> lock(impl_->mutex);
         impl_->stop = true;
@@ -298,9 +341,30 @@ void ClickSynth::shutdown() {
     if (impl_->worker.joinable()) {
         impl_->worker.join();
     }
-    if (impl_->pcm) {
-        snd_pcm_close(impl_->pcm);
-        impl_->pcm = nullptr;
+
+    if (impl_->strong_sound_ready) {
+        ma_sound_uninit(&impl_->strong_sound);
+        impl_->strong_sound_ready = false;
+    }
+    if (impl_->normal_sound_ready) {
+        ma_sound_uninit(&impl_->normal_sound);
+        impl_->normal_sound_ready = false;
+    }
+    if (impl_->strong_buffer_ready) {
+        ma_audio_buffer_uninit(&impl_->strong_buffer);
+        impl_->strong_buffer_ready = false;
+    }
+    if (impl_->normal_buffer_ready) {
+        ma_audio_buffer_uninit(&impl_->normal_buffer);
+        impl_->normal_buffer_ready = false;
+    }
+    if (impl_->engine_ready) {
+        ma_engine_uninit(&impl_->engine);
+        impl_->engine_ready = false;
+    }
+    if (impl_->context_ready) {
+        ma_context_uninit(&impl_->context);
+        impl_->context_ready = false;
     }
 #endif
 }

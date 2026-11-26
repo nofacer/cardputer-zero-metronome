@@ -1,4 +1,4 @@
-name: Build ARM64 package (ALSA enabled)
+name: Build ARM64 package (PulseAudio audio)
 
 on:
   workflow_dispatch:
@@ -32,37 +32,8 @@ jobs:
           cmake --version
           aarch64-linux-gnu-gcc --version | head -n 1
 
-      - name: First configure (fetch BSP and deps)
+      - name: Configure cross build (fetch BSP and deps)
         run: cmake --preset cp0-cross
-
-      - name: Add arm64 ALSA dev files to BSP sysroot
-        run: |
-          set -euo pipefail
-          # security.ubuntu.com has no arm64 indexes, so do not use apt here.
-          # Fetch the libasound2-dev arm64 deb directly from Ubuntu ports.
-          POOL="http://ports.ubuntu.com/ubuntu-ports/pool/main/a/alsa-lib"
-          DEB="$(curl -fsSL "$POOL/" \
-            | grep -o 'libasound2-dev_[^"<>]*_arm64\.deb' \
-            | sort -Vu \
-            | tail -n 1)"
-          test -n "$DEB"
-          echo "Downloading $DEB"
-          mkdir -p "$RUNNER_TEMP/alsa-dev"
-          cd "$RUNNER_TEMP/alsa-dev"
-          curl -fsSLO "$POOL/$DEB"
-
-          SYSROOT="$(sed -n 's/^CM0_SDK_ROOT:PATH=//p' "$GITHUB_WORKSPACE/build/cp0-cross/CMakeCache.txt" | head -n 1)"
-          if [[ -z "$SYSROOT" || ! -d "$SYSROOT/usr/include" ]]; then
-            echo "Cannot resolve CM0 sysroot from CMakeCache.txt" >&2
-            exit 1
-          fi
-          echo "Sysroot: $SYSROOT"
-          dpkg-deb -x "$DEB" "$SYSROOT"
-          test -f "$SYSROOT/usr/include/alsa/asoundlib.h"
-          find "$SYSROOT/usr/lib" -name 'libasound.so' -print
-
-      - name: Reconfigure with ALSA enabled
-        run: cmake --preset cp0-cross -DAPP_USE_ALSA=ON
 
       - name: Build release and package
         run: |
@@ -84,7 +55,7 @@ jobs:
       - name: Upload Debian package
         uses: actions/upload-artifact@v4
         with:
-          name: metronome-arm64-alsa-deb
+          name: metronome-arm64-deb
           path: dist/*.deb
           if-no-files-found: error
 

@@ -142,7 +142,7 @@ Common CMake cache options:
 | `APP_KEY_INPUT_DEVICE` | empty | Optional Linux evdev device path, e.g. `/dev/input/event0`. Empty means auto-scan `/dev/input/event*`. |
 | `APP_FRAMEBUFFER_DEVICE` | `/dev/fb0` | Linux framebuffer device used by embedded builds when `APP_USE_DRM=OFF`. |
 | `APP_USE_DRM` | `OFF` | Use LVGL's Linux DRM/KMS backend instead of fbdev for embedded builds. |
-| `APP_USE_ALSA` | `OFF` | Enable ALSA click output for embedded builds. Desktop builds always use SDL2 audio. |
+| `APP_USE_ALSA` | `OFF` | Legacy option; device builds now use the vendored miniaudio PulseAudio backend described below. Desktop builds use SDL2 audio. |
 | `APP_DRM_DEVICE` | `/dev/dri/card0` | DRM device path used when `APP_USE_DRM=ON`. |
 | `APP_DRM_CONNECTOR_ID` | `-1` | DRM connector id used when `APP_USE_DRM=ON`; `-1` auto-selects. |
 
@@ -457,12 +457,12 @@ recommended for routine use.
 
 ### CI build (GitHub Actions)
 
-`.github/workflows/build-arm64.yml` builds the ARM64 package on `ubuntu-24.04` with
-`APP_USE_ALSA=ON`, so no cross toolchain is needed on your own machine. Trigger it from the Actions
-tab (`workflow_dispatch`) or by pushing to `main`. The workflow fetches the BSP, injects the arm64
-`libasound2-dev` headers into the sysroot, then builds Release + Debug and uploads two artifacts:
+`.github/workflows/build-arm64.yml` builds the ARM64 package on `ubuntu-24.04`, so no cross
+toolchain is needed on your own machine. Trigger it from the Actions tab (`workflow_dispatch`) or
+by pushing to `main`. The workflow fetches the BSP, then builds Release + Debug and uploads two
+artifacts:
 
-- `metronome-arm64-alsa-deb` — the package to install on the device (click sounds enabled)
+- `metronome-arm64-deb` — the package to install on the device
 - `metronome-arm64-debug` — save it as `build/cp0-cross/Debug/metronome` to use `--debug`
 
 After downloading the deb artifact into `dist/`:
@@ -471,9 +471,10 @@ After downloading the deb artifact into `dist/`:
 ./deploy-oneclick.sh <user>@<ip> --install-only --no-build
 ```
 
-On the device the app tries `default`, `plughw:0,0`, `hw:0,0`, `plughw:1,0`, and `hw:1,0` in
-that order. If none of them matches your sound card, set `METRONOME_ALSA_DEVICE` in the
-environment (for example `METRONOME_ALSA_DEVICE=hw:1,0 /usr/bin/metronome`).
+Device audio uses the vendored miniaudio header (`src/platform/vendor/miniaudio.h`) through the
+`ma_backend_pulseaudio` backend, matching the official launcher: the Cardputer Zero speaker is owned
+by pipewire-pulse, so raw ALSA `hw:`/`default` devices are not used. No ALSA development files are
+needed to build.
 
 
 ## Development Guide
