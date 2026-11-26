@@ -38,19 +38,18 @@ jobs:
       - name: Add arm64 ALSA dev files to BSP sysroot
         run: |
           set -euo pipefail
-          sudo dpkg --add-architecture arm64
-          if [[ -f /etc/apt/sources.list.d/ubuntu.sources ]]; then
-            sudo apt-get update \
-              -o Dir::Etc::sourcelist="sources.list.d/ubuntu.sources" \
-              -o Dir::Etc::sourceparts="-" \
-              -o APT::Get::List-Cleanup=0
-          else
-            sudo apt-get update
-          fi
-
+          # security.ubuntu.com has no arm64 indexes, so do not use apt here.
+          # Fetch the libasound2-dev arm64 deb directly from Ubuntu ports.
+          POOL="http://ports.ubuntu.com/ubuntu-ports/pool/main/a/alsa-lib"
+          DEB="$(curl -fsSL "$POOL/" \
+            | grep -o 'libasound2-dev_[^"<>]*_arm64\.deb' \
+            | sort -Vu \
+            | tail -n 1)"
+          test -n "$DEB"
+          echo "Downloading $DEB"
           mkdir -p "$RUNNER_TEMP/alsa-dev"
           cd "$RUNNER_TEMP/alsa-dev"
-          apt-get download libasound2-dev:arm64
+          curl -fsSLO "$POOL/$DEB"
 
           SYSROOT="$(sed -n 's/^CM0_SDK_ROOT:PATH=//p' build/cp0-cross/CMakeCache.txt | head -n 1)"
           if [[ -z "$SYSROOT" || ! -d "$SYSROOT/usr/include" ]]; then
@@ -58,7 +57,7 @@ jobs:
             exit 1
           fi
           echo "Sysroot: $SYSROOT"
-          dpkg-deb -x libasound2-dev_*_arm64.deb "$SYSROOT"
+          dpkg-deb -x "$DEB" "$SYSROOT"
           test -f "$SYSROOT/usr/include/alsa/asoundlib.h"
           find "$SYSROOT/usr/lib" -name 'libasound.so' -print
 
