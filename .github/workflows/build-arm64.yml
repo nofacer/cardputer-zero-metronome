@@ -51,7 +51,7 @@ jobs:
           cd "$RUNNER_TEMP/alsa-dev"
           curl -fsSLO "$POOL/$DEB"
 
-          SYSROOT="$(sed -n 's/^CM0_SDK_ROOT:PATH=//p' build/cp0-cross/CMakeCache.txt | head -n 1)"
+          SYSROOT="$(sed -n 's/^CM0_SDK_ROOT:PATH=//p' "$GITHUB_WORKSPACE/build/cp0-cross/CMakeCache.txt" | head -n 1)"
           if [[ -z "$SYSROOT" || ! -d "$SYSROOT/usr/include" ]]; then
             echo "Cannot resolve CM0 sysroot from CMakeCache.txt" >&2
             exit 1
