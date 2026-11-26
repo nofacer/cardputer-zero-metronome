@@ -257,7 +257,6 @@ else()
             )
         endif()
         cm0_add_imported_library(CM0::ALSA "${ALSA_LIBRARY}" "${ALSA_INCLUDE_DIR}")
-        list(APPEND LVGL_LIBS CM0::ALSA)
         message(STATUS "CM0 ALSA click output enabled")
     endif()
 
@@ -376,6 +375,9 @@ else()
             ${DRM_MODE_INCLUDE_DIR}
         )
         list(APPEND LVGL_LIBS CM0::DRM)
+    endif()
+    if(APP_USE_ALSA AND TARGET CM0::ALSA)
+        list(APPEND LVGL_LIBS CM0::ALSA)
     endif()
 
     list(REMOVE_DUPLICATES PLATFORM_INCLUDE_DIR)
