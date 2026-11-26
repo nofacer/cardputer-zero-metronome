@@ -438,6 +438,39 @@ On your device, install the copied package with `apt` and replace the package fi
 sudo apt install --no-install-recommends ./metronome_0.2.1-rev1_arm64.deb
 ```
 
+### One-click device deployment
+
+`deploy-oneclick.sh` builds, uploads, installs, and starts the app over SSH, answering password
+prompts automatically (macOS built-in `expect`; no `sshpass` needed). It asks for `user@ip` and the
+password interactively, or takes them from `DEVICE_PASSWORD`:
+
+```shell
+./deploy-oneclick.sh pi@192.168.1.10            # build + install + run with logs streamed back
+./deploy-oneclick.sh pi@192.168.1.10 --debug    # push Debug binary, start gdbserver :1234
+./deploy-oneclick.sh pi@192.168.1.10 --dry-run  # print remote commands without connecting
+```
+
+The script looks for `cmake`/`ninja` in the Python user paths too. If the cross toolchain is not
+available it skips rebuilding and deploys the newest existing `dist/*.deb` instead. The password
+goes through SSH but is visible in the script's process environment; SSH keys with `deploy.sh` are
+recommended for routine use.
+
+### CI build (GitHub Actions)
+
+`.github/workflows/build-arm64.yml` builds the ARM64 package on `ubuntu-24.04` with
+`APP_USE_ALSA=ON`, so no cross toolchain is needed on your own machine. Trigger it from the Actions
+tab (`workflow_dispatch`) or by pushing to `main`. The workflow fetches the BSP, injects the arm64
+`libasound2-dev` headers into the sysroot, then builds Release + Debug and uploads two artifacts:
+
+- `metronome-arm64-alsa-deb` — the package to install on the device (click sounds enabled)
+- `metronome-arm64-debug` — save it as `build/cp0-cross/Debug/metronome` to use `--debug`
+
+After downloading the deb artifact into `dist/`:
+
+```shell
+./deploy-oneclick.sh <user>@<ip> --install-only --no-build
+```
+
 
 ## Development Guide
 

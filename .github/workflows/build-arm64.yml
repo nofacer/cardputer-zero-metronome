@@ -1,0 +1,97 @@
+name: Build ARM64 package (ALSA enabled)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install host build tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            crossbuild-essential-arm64 \
+            ninja-build git dpkg-dev ca-certificates \
+            python3-venv
+
+          # The presets require CMake >= 3.31; Ubuntu 24.04 ships 3.28.
+          python3 -m venv "$RUNNER_TEMP/cmake-venv"
+          "$RUNNER_TEMP/cmake-venv/bin/pip" install -q 'cmake~=3.31.0'
+          echo "$RUNNER_TEMP/cmake-venv/bin" >> "$GITHUB_PATH"
+          export PATH="$RUNNER_TEMP/cmake-venv/bin:$PATH"
+          cmake --version
+          aarch64-linux-gnu-gcc --version | head -n 1
+
+      - name: First configure (fetch BSP and deps)
+        run: cmake --preset cp0-cross
+
+      - name: Add arm64 ALSA dev files to BSP sysroot
+        run: |
+          set -euo pipefail
+          sudo dpkg --add-architecture arm64
+          if [[ -f /etc/apt/sources.list.d/ubuntu.sources ]]; then
+            sudo apt-get update \
+              -o Dir::Etc::sourcelist="sources.list.d/ubuntu.sources" \
+              -o Dir::Etc::sourceparts="-" \
+              -o APT::Get::List-Cleanup=0
+          else
+            sudo apt-get update
+          fi
+
+          mkdir -p "$RUNNER_TEMP/alsa-dev"
+          cd "$RUNNER_TEMP/alsa-dev"
+          apt-get download libasound2-dev:arm64
+
+          SYSROOT="$(sed -n 's/^CM0_SDK_ROOT:PATH=//p' build/cp0-cross/CMakeCache.txt | head -n 1)"
+          if [[ -z "$SYSROOT" || ! -d "$SYSROOT/usr/include" ]]; then
+            echo "Cannot resolve CM0 sysroot from CMakeCache.txt" >&2
+            exit 1
+          fi
+          echo "Sysroot: $SYSROOT"
+          dpkg-deb -x libasound2-dev_*_arm64.deb "$SYSROOT"
+          test -f "$SYSROOT/usr/include/alsa/asoundlib.h"
+          find "$SYSROOT/usr/lib" -name 'libasound.so' -print
+
+      - name: Reconfigure with ALSA enabled
+        run: cmake --preset cp0-cross -DAPP_USE_ALSA=ON
+
+      - name: Build release and package
+        run: |
+          set -euo pipefail
+          cmake --build --preset cp0-cross-rel
+          cpack --config build/cp0-cross/CPackConfig.cmake -G DEB
+          ls -lh dist/*.deb
+
+      - name: Build debug binary
+        run: cmake --build --preset cp0-cross-dbg
+
+      - name: Verify package metadata
+        run: |
+          set -euo pipefail
+          deb="$(ls -t dist/*.deb | head -n 1)"
+          dpkg-deb -f "$deb" Package Version Architecture Depends
+          dpkg-deb -c "$deb" | grep -E 'usr/bin/metronome|usr/share/metronome' | head -n 20
+
+      - name: Upload Debian package
+        uses: actions/upload-artifact@v4
+        with:
+          name: metronome-arm64-alsa-deb
+          path: dist/*.deb
+          if-no-files-found: error
+
+      - name: Upload debug binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: metronome-arm64-debug
+          path: build/cp0-cross/Debug/metronome
+          if-no-files-found: error
