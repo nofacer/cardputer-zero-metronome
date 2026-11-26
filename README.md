@@ -471,6 +471,10 @@ After downloading the deb artifact into `dist/`:
 ./deploy-oneclick.sh <user>@<ip> --install-only --no-build
 ```
 
+On the device the app tries `default`, `plughw:0,0`, `hw:0,0`, `plughw:1,0`, and `hw:1,0` in
+that order. If none of them matches your sound card, set `METRONOME_ALSA_DEVICE` in the
+environment (for example `METRONOME_ALSA_DEVICE=hw:1,0 /usr/bin/metronome`).
+
 
 ## Development Guide
 

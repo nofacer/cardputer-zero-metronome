@@ -10,6 +10,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstddef>
+#include <cstdlib>
 #include <utility>
 #include <vector>
 
@@ -188,31 +189,52 @@ bool ClickSynth::initialize(std::string& error) {
         return true;
     }
 
-    const int result = snd_pcm_open(&impl_->pcm, "default", SND_PCM_STREAM_PLAYBACK, 0);
-    if (result < 0 || !impl_->pcm) {
-        error = std::string("ALSA open failed: ") + snd_strerror(result);
-        impl_->pcm = nullptr;
-        return false;
+    // Some boards have no usable "default" PCM. Try common alternatives and
+    // allow an explicit override via METRONOME_ALSA_DEVICE (e.g. "hw:1,0").
+    std::vector<std::string> candidates;
+    if (const char* requested = std::getenv("METRONOME_ALSA_DEVICE")) {
+        if (*requested != '\0') {
+            candidates.emplace_back(requested);
+        }
+    }
+    candidates.emplace_back("default");
+    for (int card = 0; card <= 1; ++card) {
+        const std::string suffix = ",0";
+        candidates.emplace_back("plughw:" + std::to_string(card) + suffix);
+        candidates.emplace_back("hw:" + std::to_string(card) + suffix);
     }
 
-    const int params_result = snd_pcm_set_params(impl_->pcm,
-                                                 SND_PCM_FORMAT_S16_LE,
-                                                 SND_PCM_ACCESS_RW_INTERLEAVED,
-                                                 1,
-                                                 kSampleRate,
-                                                 1,
-                                                 50000);
-    if (params_result < 0) {
-        error = std::string("ALSA setup failed: ") + snd_strerror(params_result);
-        snd_pcm_close(impl_->pcm);
-        impl_->pcm = nullptr;
-        return false;
+    std::string failures;
+    for (const auto& name : candidates) {
+        snd_pcm_t* pcm = nullptr;
+        const int result = snd_pcm_open(&pcm, name.c_str(), SND_PCM_STREAM_PLAYBACK, 0);
+        if (result < 0 || !pcm) {
+            failures += name + ": " + snd_strerror(result) + "; ";
+            continue;
+        }
+
+        const int params_result = snd_pcm_set_params(pcm,
+                                                     SND_PCM_FORMAT_S16_LE,
+                                                     SND_PCM_ACCESS_RW_INTERLEAVED,
+                                                     1,
+                                                     kSampleRate,
+                                                     1,
+                                                     50000);
+        if (params_result < 0) {
+            failures += name + ": setup " + snd_strerror(params_result) + "; ";
+            snd_pcm_close(pcm);
+            continue;
+        }
+
+        impl_->pcm = pcm;
+        impl_->normal_click = make_click(kSampleRate, 880.0F, 45.0F);
+        impl_->strong_click = make_click(kSampleRate, 1320.0F, 55.0F);
+        impl_->worker = std::thread(&Impl::run, impl_.get());
+        return true;
     }
 
-    impl_->normal_click = make_click(kSampleRate, 880.0F, 45.0F);
-    impl_->strong_click = make_click(kSampleRate, 1320.0F, 55.0F);
-    impl_->worker = std::thread(&Impl::run, impl_.get());
-    return true;
+    error = "ALSA open/setup failed: " + failures;
+    return false;
 #else
     error = "audio output is not enabled in this build";
     return false;
