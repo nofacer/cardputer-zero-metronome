@@ -138,6 +138,8 @@ struct ClickSynth::Impl {
             }
         }
     }
+#else
+    std::atomic<int> volume{70};
 #endif
 };
 
